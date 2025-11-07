@@ -90,22 +90,22 @@ def resolve_routing_policy(hostname, routes):
 
     print(hostname)
     proxy_map, policy = routes.get(hostname,('127.0.0.1:9000','round-robin'))
-    print proxy_map
-    print policy
+    print(proxy_map)
+    print(policy)
 
     proxy_host = ''
     proxy_port = '9000'
     if isinstance(proxy_map, list):
         if len(proxy_map) == 0:
             print("[Proxy] Emtpy resolved routing of hostname {}".format(hostname))
-            print "Empty proxy_map result"
+            print("Empty proxy_map result")
             # TODO: implement the error handling for non mapped host
             #       the policy is design by team, but it can be 
             #       basic default host in your self-defined system
             # Use a dummy host to raise an invalid connection
             proxy_host = '127.0.0.1'
             proxy_port = '9000'
-        elif len(value) == 1:
+        elif len(proxy_map) == 1:
             proxy_host, proxy_port = proxy_map[0].split(":", 2)
         #elif: # apply the policy handling 
         #   proxy_map
@@ -139,14 +139,42 @@ def handle_client(ip, port, conn, addr, routes):
     :params routes (dict): dictionary mapping hostnames and location.
     """
 
-    request = conn.recv(1024).decode()
+    request_data = b""
+    while True:
+        chunk = conn.recv(4096)
+        if not chunk:
+            break
+        request_data += chunk
+        # HTTP header kết thúc bằng \r\n\r\n
+        if b"\r\n\r\n" in request_data:
+            break
 
-    # Extract hostname
+    try:
+        request = request_data.decode("utf-8", errors="ignore")
+    except Exception:
+        request = ""
+
+    if not request.strip():
+        print("[Proxy] Empty request received from", addr)
+        conn.close()
+        return
+
+    # --- Lấy Host header ---
+    hostname = None
     for line in request.splitlines():
-        if line.lower().startswith('host:'):
-            hostname = line.split(':', 1)[1].strip()
+        if line.lower().startswith("host:"):
+            hostname = line.split(":", 1)[1].strip()
+            break
 
-    print("[Proxy] {} at Host: {}".format(addr, hostname))
+    if not hostname:
+        print("[Proxy] Missing Host header from", addr)
+        conn.sendall(
+            b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nMissing Host header"
+        )
+        conn.close()
+        return
+
+    print(f"[Proxy] {addr} at Host: {hostname}")
 
     # Resolve the matching destination in routes and need conver port
     # to integer value
@@ -199,6 +227,9 @@ def run_proxy(ip, port, routes):
             #        using multi-thread programming with the
             #        provided handle_client routine
             #
+            thread = threading.Thread(target=handle_client, args=(ip, port, conn, addr, routes))
+            thread.daemon = True
+            thread.start()
     except socket.error as e:
       print("Socket error: {}".format(e))
 

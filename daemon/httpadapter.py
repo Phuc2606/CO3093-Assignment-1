@@ -22,8 +22,7 @@ Request and Response objects to handle client-server communication.
 
 from .request import Request
 from .response import Response
-from .dictionary import CaseInsensitiveDict
-
+from .response_template import RESPONSE_TEMPLATES
 class HttpAdapter:
     """
     A mutable :class:`HTTP adapter <HTTP adapter>` for managing client connections
@@ -101,25 +100,56 @@ class HttpAdapter:
         req = self.request
         # Response handler
         resp = self.response
-
+        try:
         # Handle the request
-        msg = conn.recv(1024).decode()
-        req.prepare(msg, routes)
+            msg = conn.recv(1024).decode()
+            req.prepare(msg, routes)
+            # Task 1A: login
+            if req.method == "POST" and req.path == "/login":
+                return self.send(resp, self.handle_login(req, resp))
 
-        # Handle request hook
-        if req.hook:
-            print("[HttpAdapter] hook in route-path METHOD {} PATH {}".format(req.hook._route_path,req.hook._route_methods))
-            req.hook(headers = "bksysnet",body = "get in touch")
-            #
-            # TODO: handle for App hook here
-            #
+            # Task 1B: cookie guard
+            early = self.cookie_auth_guard(req)
+            if early is not None:
+                return self.send(resp, early)
+            raw = self.response.build_response(req)
+            self.conn.sendall(raw)
+        finally:
+            conn.close()
+    def handle_login(self, req, resp):
+        raw_body = req.body.decode("utf-8", "ignore") if isinstance(req.body, (bytes, bytearray)) else (req.body or "")
+        creds = {}
+        for pair in raw_body.split("&"):
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                creds[k] = v
 
-        # Build response
-        response = resp.build_response(req)
+        if creds.get("username") == "admin" and creds.get("password") == "password":
+            req.path = "/index.html"
+            raw = resp.build_response(req)
+            body = raw.split(b"\r\n\r\n", 1)[1] if b"\r\n\r\n" in raw else raw
+            headers = {
+                "Content-Type": "text/html; charset=utf-8",
+                "Set-Cookie": "auth=true; Path=/",
+            }
+            return ("200 OK", headers, body)
 
-        #print(response)
-        conn.sendall(response)
-        conn.close()
+        e = RESPONSE_TEMPLATES["login_failed"]
+        return (e["status"], {"Content-Type": e["content_type"], **e["headers"]}, e["body"])
+    #TASK 1: COOKIES
+    def cookie_auth_guard(self, req):
+        if req.path in ("/", "/index.html"):
+            if req.cookies.get("auth") != "true":
+                e = RESPONSE_TEMPLATES["unauthorized"]
+                return (e["status"], {"Content-Type": e["content_type"], **e["headers"]}, e["body"])
+        if req.path == "/":
+            req.path = "/index.html"
+        return None
+    
+    def send(self, resp, triple):
+        status, headers, body = triple
+        self.conn.sendall(resp.compose(status=status, headers=headers, body=body))
+
 
     @property
     def extract_cookies(self, req, resp):
@@ -131,11 +161,12 @@ class HttpAdapter:
         :rtype: cookies - A dictionary of cookie key-value pairs.
         """
         cookies = {}
-        for header in headers:
-            if header.startswith("Cookie:"):
-                cookie_str = header.split(":", 1)[1].strip()
-                for pair in cookie_str.split(";"):
-                    key, value = pair.strip().split("=")
+        headers = req.headers if hasattr(req, "headers") else {}
+        cookie_header = headers.get("Cookie")
+        if cookie_header:
+            for pair in cookie_header.split(";"):
+                if "=" in pair:
+                    key, value = pair.strip().split("=", 1)
                     cookies[key] = value
         return cookies
 
@@ -149,17 +180,14 @@ class HttpAdapter:
         response = Response()
 
         # Set encoding.
-        response.encoding = get_encoding_from_headers(response.headers)
+        response.encoding = resp.headers.get("Content-Encoding", "utf-8")
         response.raw = resp
-        response.reason = response.raw.reason
+        response.reason = getattr(resp, "reason", "OK")
 
-        if isinstance(req.url, bytes):
-            response.url = req.url.decode("utf-8")
-        else:
-            response.url = req.url
+        response.url = req.url.decode("utf-8") if isinstance(req.url, bytes) else req.url
 
         # Add new cookies from the server.
-        response.cookies = extract_cookies(req)
+        response.cookies = self.extract_cookies(req)
 
         # Give the Response some context.
         response.request = req

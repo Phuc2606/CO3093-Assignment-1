@@ -153,19 +153,22 @@ class Response():
         main_type, sub_type = mime_type.split('/', 1)
         print("[Response] processing MIME main_type={} sub_type={}".format(main_type,sub_type))
         if main_type == 'text':
-            self.headers['Content-Type']='text/{}'.format(sub_type)
-            if sub_type == 'plain' or sub_type == 'css':
+            self.headers['Content-Type']=f'text/{sub_type}'
+            if sub_type in ('plain', 'css', 'js'):
                 base_dir = BASE_DIR+"static/"
             elif sub_type == 'html':
                 base_dir = BASE_DIR+"www/"
             else:
-                handle_text_other(sub_type)
+                base_dir = BASE_DIR + "static/"
         elif main_type == 'image':
-            base_dir = BASE_DIR+"static/"
-            self.headers['Content-Type']='image/{}'.format(sub_type)
+            self.headers['Content-Type'] = f'image/{sub_type}'
+            base_dir = BASE_DIR + "static/"
         elif main_type == 'application':
-            base_dir = BASE_DIR+"apps/"
-            self.headers['Content-Type']='application/{}'.format(sub_type)
+            self.headers["Content-Type"] = f"application/{sub_type}"
+            base_dir = BASE_DIR + "static/"
+        elif main_type == 'video':
+            self.headers['Content-Type'] = f'video/{sub_type}'
+            base_dir = BASE_DIR + "static/"
         #
         #  TODO: process other mime_type
         #        application/xml       
@@ -201,6 +204,17 @@ class Response():
             #  TODO: implement the step of fetch the object file
             #        store in the return value of content
             #
+        if not os.path.exists(filepath):
+            print("[Response] File not found -> 404")
+            return 0, b"404 Not Found"
+        try:
+            # Đọc file nhị phân (cho cả ảnh, CSS, HTML, ...)
+            with open(filepath, "rb") as f:
+                content = f.read()
+        except Exception as e:
+            print(f"[Response] Error reading file: {e}")
+            return 0, f"Error reading file: {e}".encode("utf-8")
+        
         return len(content), content
 
 
@@ -224,7 +238,7 @@ class Response():
                 "Cache-Control": "no-cache",
                 "Content-Type": "{}".format(self.headers['Content-Type']),
                 "Content-Length": "{}".format(len(self._content)),
-#                "Cookie": "{}".format(reqhdr.get("Cookie", "sessionid=xyz789")), #dummy cooki
+                "Cookie": "{}".format(reqhdr.get("Cookie", "sessionid=xyz789")), #dummy cookie
         #
         # TODO prepare the request authentication
         #
@@ -246,6 +260,11 @@ class Response():
         # TODO prepare the request authentication
         #
 	# self.auth = ...
+        # Ghép header thành dạng HTTP chuẩn
+        fmt_header = "HTTP/1.1 200 OK\r\n"
+        for key, val in headers.items():
+            fmt_header += f"{key}: {val}\r\n"
+        fmt_header += "\r\n"  # kết thúc header    
         return str(fmt_header).encode('utf-8')
 
 
@@ -276,26 +295,39 @@ class Response():
 
         :rtype bytes: complete HTTP response using prepared headers and content.
         """
-
-        path = request.path
-
-        mime_type = self.get_mime_type(path)
-        print("[Response] {} path {} mime_type {}".format(request.method, request.path, mime_type))
-
-        base_dir = ""
-
-        #If HTML, parse and serve embedded objects
-        if path.endswith('.html') or mime_type == 'text/html':
-            base_dir = self.prepare_content_type(mime_type = 'text/html')
-        elif mime_type == 'text/css':
-            base_dir = self.prepare_content_type(mime_type = 'text/css')
         #
         # TODO: add support objects
         #
-        else:
+        path = request.path
+        if path == '/':
+           path = '/index.html'
+        mime_type = self.get_mime_type(path)
+        print(f"[Response] {request.method} path {request.path} mime_type {mime_type}")
+
+        try:
+            base_dir = self.prepare_content_type(mime_type)
+        except ValueError:
             return self.build_notfound()
 
         c_len, self._content = self.build_content(path, base_dir)
+
+        if c_len <= 0:
+            return self.build_notfound()
+
         self._header = self.build_response_header(request)
 
         return self._header + self._content
+    
+    def compose(self, status="200 OK", headers=None, body=b""):
+        """
+        Gộp status line, headers và body thành gói HTTP hoàn chỉnh (dạng bytes)
+        """
+        headers = headers or {}
+        header_lines = [f"HTTP/1.1 {status}"]
+        for k, v in headers.items():
+            header_lines.append(f"{k}: {v}")
+        header_lines.append(f"Content-Length: {len(body)}")
+        header_lines.append("")  # dòng trống trước body
+        header_lines.append("")  # đảm bảo 2 \r\n
+        head = "\r\n".join(header_lines).encode("utf-8")
+        return head + body

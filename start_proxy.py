@@ -39,7 +39,8 @@ import socket
 import threading
 import argparse
 import re
-from urlparse import urlparse
+from urllib.parse import urlparse  # Python 3
+
 from collections import defaultdict
 
 from daemon import create_proxy
@@ -69,10 +70,9 @@ def parse_virtual_hosts(config_file):
 
         # Find all proxy_pass entries
         proxy_passes = re.findall(r'proxy_pass\s+http://([^\s;]+);', block)
-        map = proxy_map.get(host,[])
-        map = map + proxy_passes
-        proxy_map[host] = map
-
+        #map = proxy_map.get(host,[])
+        #map = map + proxy_passes
+        proxy_map[host] = proxy_passes
         # Find dist_policy if present
         policy_match = re.search(r'dist_policy\s+(\w+)', block)
         if policy_match:
@@ -90,14 +90,14 @@ def parse_virtual_hosts(config_file):
         #
         if len(proxy_map.get(host,[])) == 1:
             routes[host] = (proxy_map.get(host,[])[0], dist_policy_map)
-        # esle if:
+        elif len(proxy_map.get(host, [])) > 1 and dist_policy_map != 'round-robin':
         #         TODO:  apply further policy matching here
-        #
+            routes[host] = (proxy_map.get(host, []), dist_policy_map)
         else:
             routes[host] = (proxy_map.get(host,[]), dist_policy_map)
 
     for key, value in routes.items():
-        print key, value
+        print(key, value)
     return routes
 
 

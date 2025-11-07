@@ -18,7 +18,7 @@ This module provides a Request object to manage and persist
 request settings (cookies, auth, proxies).
 """
 from .dictionary import CaseInsensitiveDict
-
+from .utils import get_auth_from_url
 class Request():
     """The fully mutable "class" `Request <Request>` object,
     containing the exact bytes that will be sent to the server.
@@ -71,18 +71,15 @@ class Request():
             lines = request.splitlines()
             first_line = lines[0]
             method, path, version = first_line.split()
-
-            if path == '/':
-                path = '/index.html'
+            return method, path, version
         except Exception:
-            return None, None
-
-        return method, path, version
+            print("[Request] Invalid request line:", request)
+            return None, None, None
              
     def prepare_headers(self, request):
         """Prepares the given HTTP headers."""
         lines = request.split('\r\n')
-        headers = {}
+        headers = CaseInsensitiveDict()
         for line in lines[1:]:
             if ': ' in line:
                 key, val = line.split(': ', 1)
@@ -101,40 +98,55 @@ class Request():
         # The default behaviour with HTTP server is empty routed
         #
         # TODO manage the webapp hook in this mounting point
-        #
-        
-        if not routes == {}:
+        self.headers = self.prepare_headers(request)
+        #Parse header
+        self.prepare_cookies_from_header()
+
+        #Parse routes and hook (for webapp)
+        if routes:
             self.routes = routes
             self.hook = routes.get((self.method, self.path))
-            #
-            # self.hook manipulation goes here
-            # ...
-            #
+            if self.hook:
+                print(f"[Request] Hook found for {self.path}")
 
-        self.headers = self.prepare_headers(request)
-        cookies = self.headers.get('cookie', '')
-            #
-            #  TODO: implement the cookie function here
-            #        by parsing the header            #
+        #Parse body (after blank line)
+        body_split = request.split('\r\n\r\n', 1)
+        self.body = body_split[1] if len(body_split) > 1 else ""
 
-        return
+        #Ensure Content-Length header
+        self.prepare_content_length(self.body)
+
+        return self
 
     def prepare_body(self, data, files, json=None):
-        self.prepare_content_length(self.body)
-        self.body = body
+        if json is not None:
+            try:
+               self.body = json.dumps(json)
+               self.headers["Content-Type"] = "application/json"
+            except Exception:
+                self.body = {}
+        elif data:
+            self.body = data if isinstance(data, str) else str(data)
+        else:
+            self.body = ""
         #
         # TODO prepare the request authentication
         #
 	# self.auth = ...
+        self.prepare_content_length(self.body)
+        self.prepare_auth(None)
         return
 
 
     def prepare_content_length(self, body):
-        self.headers["Content-Length"] = "0"
         #
         # TODO prepare the request authentication
         #
 	# self.auth = ...
+        if self.headers is None:
+            self.headers = CaseInsensitiveDict()
+        length = len(body.encode('utf-8') if isinstance(body, str) else body)
+        self.headers["Content-Length"] = str(length)
         return
 
 
@@ -143,7 +155,23 @@ class Request():
         # TODO prepare the request authentication
         #
 	# self.auth = ...
-        return
+        self.auth = get_auth_from_url(url)
+        return self.auth
 
     def prepare_cookies(self, cookies):
-            self.headers["Cookie"] = cookies
+        """Attach cookies to header."""
+        if cookies and isinstance(cookies, dict):
+            cookie_str = '; '.join(f"{k}={v}" for k, v in cookies.items())
+            if not self.headers:
+                self.headers = CaseInsensitiveDict()
+            self.headers["cookie"] = cookie_str
+        return
+
+    def prepare_cookies_from_header(self):
+        """Parse cookies from 'cookie' header."""
+        self.cookies = {}
+        cookie_header = self.headers.get('cookie', '')
+        for pair in cookie_header.split(';'):
+            if '=' in pair:
+                key, value = pair.strip().split('=', 1)
+                self.cookies[key] = value

@@ -59,7 +59,6 @@ def handle_client(ip, port, conn, addr, routes):
     :param routes (dict): Dictionary of route handlers.
     """
     daemon = HttpAdapter(ip, port, conn, addr, routes)
-
     # Handle client
     daemon.handle_client(conn, addr, routes)
 
@@ -90,6 +89,9 @@ def run_backend(ip, port, routes):
             #        using multi-thread programming with the
             #        provided handle_client routine
             #
+            thread = threading.Thread(target=handle_client, args=(ip, port, conn, addr, routes))
+            thread.daemon = True
+            thread.start()
     except socket.error as e:
       print("Socket error: {}".format(e))
 

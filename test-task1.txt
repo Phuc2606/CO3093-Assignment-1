@@ -1,0 +1,45 @@
+
+Step 1 - Start server
+
+#Start backend
+python start_backend.py --server-ip 127.0.0.1 --server-port 9000
+✅Expected: 
+[Backend] Listening on port 9000
+#Start proxy server
+python start_proxy.py --server-ip 0.0.0.0 --server-port 8080
+✅Expected: 
+127.0.0.1:8080 ('127.0.0.1:9000', 'round-robin')
+app1.local ('192.168.56.103:9001', 'round-robin')
+app2.local (['192.168.56.210:9002', '192.168.56.220:9002'], 'round')
+
+Step 2 – Test via Browser
+1. Open Incognito / Private tab
+
+2. Go to: http://127.0.0.1:8080
+✅Expected: Before login → Page may redirect to /login.html and show “Unauthorized”.
+
+3. Visit login page: http://127.0.0.1:8080/login.html
+
+4. Login using:
+- Username: admin
+- Password: password
+✅Expected: 
+After login → Browser shows index.html
+
+5. After successful login, visit again: http://127.0.0.1:8080/
+
+
+Step 3 - Test via curl
+
+Test 1: Access Without cookie
+curl -v http://127.0.0.1:8080/
+✅Expected: 401 Unauthorized
+            Please login first
+
+Test 2: Login and save cookie
+curl.exe -X POST http://127.0.0.1:8080/login -d "username=admin&password=password" -c cookies.txt -v
+✅Expected: HTTP/1.1 200 OK
+
+Test 3: Access With cookie
+curl.exe -i -b cookies.txt http://127.0.0.1:8080/
+✅Expected: HTTP/1.1 200 OK
