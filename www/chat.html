@@ -248,47 +248,45 @@
         }
 
         if (data.status === "success" && data.peers) {
-          if (data.peers.length !== lastPeerCount) {
-            lastPeerCount = data.peers.length;
-            let html = "<ul>";
-            data.peers.forEach((p) => {
-              const isCurrentPeer = p.id === currentPeerId;
-              const isHandshaked = handshakes[p.id]?.status === "accepted";
-              const statusClass = isHandshaked
-                ? "handshake-accepted"
-                : "handshake-none";
-              const statusText = isHandshaked ? "✓ Connected" : "Not Connected";
+          lastPeerCount = data.peers.length;
+          let html = "<ul>";
+          data.peers.forEach((p) => {
+            const isCurrentPeer = p.id === currentPeerId;
+            const isHandshaked = handshakes[p.id]?.status === "accepted";
+            const statusClass = isHandshaked
+              ? "handshake-accepted"
+              : "handshake-none";
+            const statusText = isHandshaked ? "✓ Connected" : "Not Connected";
 
+            html +="<li" + (isCurrentPeer ? ' class="current-peer"' : "") + ">";
+            html += p.username + " (" + p.id + ") - " + p.ip + ":" + p.port;
+
+            // Only show status and connect button if not current peer
+            if (!isCurrentPeer) {
               html +=
-                "<li" + (isCurrentPeer ? ' class="current-peer"' : "") + ">";
-              html += p.username + " (" + p.id + ") - " + p.ip + ":" + p.port;
+                '<span class="handshake-status ' +
+                statusClass +
+                '">' +
+                statusText +
+                "</span>";
 
-              // Only show status and connect button if not current peer
-              if (!isCurrentPeer) {
+              if (!isHandshaked) {
                 html +=
-                  '<span class="handshake-status ' +
-                  statusClass +
-                  '">' +
-                  statusText +
-                  "</span>";
-
-                if (!isHandshaked) {
-                  html +=
-                    " <button onclick=\"doHandshake('" +
-                    p.id +
-                    "')\">Connect</button>";
-                }
-              } else {
-                html += ' <span style="color: #1976d2;">(You)</span>';
+                  " <button onclick=\"doHandshake('" +
+                  p.id +
+                  "')\">Connect</button>";
               }
+            } else {
+              html += ' <span style="color: #1976d2;">(You)</span>';
+            }
 
-              html += "</li>";
+            html += "</li>";
             });
-            html += "</ul>";
-            document.getElementById("peerList").innerHTML = html;
-          }
+          html += "</ul>";
+          document.getElementById("peerList").innerHTML = html;
         }
       }
+      
 
       async function doHandshake(peerId) {
         showStatus("Connecting to " + peerId + "...");
@@ -304,7 +302,7 @@
               (data.peer_username || "Unknown") +
               ")"
           );
-          loadPeers();
+          await loadPeers(); // Update UI
         } else {
           showStatus("Connection failed: " + (data.message || "Unknown error"));
         }
@@ -313,26 +311,15 @@
       async function loadChannels() {
         const data = await request("GET", "/api/channels");
         if (data.status === "success" && data.channels) {
-          if (data.channels.length !== lastChannelCount) {
-            lastChannelCount = data.channels.length;
-            let html = "<ul>";
-            data.channels.forEach((c) => {
-              html +=
-                "<li>" +
-                c.name +
-                " (Owner: " +
-                c.owner +
-                ", Members: " +
-                c.members +
-                ") ";
-              html +=
-                "<button onclick=\"joinChannel('" +
-                c.name +
-                "')\">Join</button></li>";
-            });
-            html += "</ul>";
-            document.getElementById("channelList").innerHTML = html;
-          }
+          let html = "<ul>";
+          data.channels.forEach((c) => {
+            html += `<li>${c.name} (Owner: ${c.owner}, Members: ${c.members}) `;
+            html += `<button onclick="joinChannel('${c.name}')">Join</button></li>`;
+          });
+          html += "</ul>";
+          document.getElementById("channelList").innerHTML = html;
+
+          lastChannelCount = data.channels.length
         }
       }
 

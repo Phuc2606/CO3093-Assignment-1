@@ -30,7 +30,28 @@ channels = {"general": {"peers": [], "owner": "system"}}  # Channel management
 peers_lock = threading.Lock()
 channels_lock = threading.Lock()
 
+
+
 app = WeApRous()
+
+# Unregister peer
+@app.route('/unregister', methods=['POST'])
+def unregister_peer(headers="", body=""):
+    """Remove peer from active list."""
+    try:
+        data = json.loads(body)
+        peer_id = data.get('peer_id')
+
+        with peers_lock:
+            if peer_id in active_peers:
+                del active_peers[peer_id]
+                print(f"[Server] Unregistered: {peer_id}")
+                total = len(active_peers)
+                return json.dumps({'status': 'success', 'total': total})
+            else:
+                return json.dumps({'status': 'error', 'message': 'Peer not found'})
+    except Exception as e:
+        return json.dumps({'status': 'error', 'message': str(e)})
 
 # Submit-info
 @app.route('/submit-info', methods=['POST'])
@@ -158,7 +179,8 @@ def channel_members(headers="", body=""):
     except Exception as e:
         return json.dumps({'status': 'error', 'message': str(e)})
 
-#Start WeApRous
+
+#Start WeAppRous
 if __name__ == "__main__":
     import argparse
 

@@ -7,6 +7,7 @@ python chat_peer.py --username <name> --peer-port 500<x> --server-ip 127.0.0.1
 #Example:  
 python chat_peer.py --username Phuc1 --peer-port 5001 --server-ip 127.0.0.1
 python chat_peer.py --username Phuc2 --peer-port 5002 --server-ip 127.0.0.1
+python chat_peer.py --username Phuc3 --peer-port 5003 --server-ip 127.0.0.1
 ....
 
 Step 3:
@@ -20,7 +21,7 @@ Step 3:
 
 5. Enter Chat Room
 - Online Peers: active_peers List
--Channels: Create, Join
+-Channels: Create, Join channel
 -Direct message: Send message to active_peer by peer_id
 -Broadcast: Broadcast message to all active_peers
 -Channel message: Send message to your channel 
