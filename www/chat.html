@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>P2P Chat</title>
+    <meta charset="utf-8" />
+<style>
+  body {
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f4f6f8;
+    color: #333;
+    margin: 0;
+    padding: 20px;
+  }
+
+  h1, h2, h3 {
+    color: #1976d2;
+  }
+
+  h1 {
+    text-align: center;
+    margin-bottom: 20px;
+  }
+
+  div.section {
+    background-color: #fff;
+    border-radius: 8px;
+    padding: 15px 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  }
+
+  button {
+    background-color: #1976d2;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    margin-left: 5px;
+    transition: background 0.3s;
+  }
+
+  button:hover {
+    background-color: #1565c0;
+  }
+
+  input[type="text"] {
+    padding: 6px 8px;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+    font-size: 13px;
+    width: auto;
+    margin-right: 5px;
+  }
+
+  #peerList ul, #channelList ul {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+  }
+
+  #peerList li, #channelList li {
+    padding: 6px 8px;
+    margin-bottom: 5px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background-color: #e3f2fd;
+  }
+
+  .current-peer {
+    font-weight: bold;
+    background-color: #bbdefb !important;
+  }
+
+  .handshake-status {
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    margin-left: 10px;
+    white-space: nowrap;
+  }
+
+  .handshake-accepted {
+    background-color: #4caf50;
+    color: white;
+  }
+
+  .handshake-none {
+    background-color: #ff9800;
+    color: white;
+  }
+
+  #messages {
+    height: 250px;
+    overflow-y: auto;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 10px;
+    background-color: #fafafa;
+  }
+
+  #messages p {
+    margin: 4px 0;
+  }
+
+  #status {
+    font-size: 13px;
+    font-weight: bold;
+    color: #1976d2;
+    margin-top: 5px;
+    min-height: 18px;
+  }
+
+  @media (max-width: 768px) {
+    body {
+      padding: 10px;
+    }
+    input[type="text"] {
+      width: 100%;
+      margin-bottom: 5px;
+    }
+    button {
+      width: 100%;
+      margin: 5px 0;
+    }
+    #peerList li, #channelList li {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
+</style>
+
+  </head>
+  <body>
+    <h1>P2P Chat Room</h1>
+
+    <div>
+      <h2>Online Peers</h2>
+      <button onclick="loadPeers()">Refresh</button>
+      <div id="peerList"></div>
+    </div>
+
+    <div>
+      <h2>Channels</h2>
+      <button onclick="loadChannels()">Refresh</button>
+      <input type="text" id="newChannel" placeholder="Channel name" />
+      <button onclick="createChannel()">Create</button>
+      <div id="channelList"></div>
+    </div>
+
+    <div>
+      <h2>Direct Message</h2>
+      <input type="text" id="directTo" placeholder="peer_5001" />
+      <input type="text" id="directMsg" placeholder="Message" />
+      <button onclick="sendDirect()">Send</button>
+    </div>
+
+    <div>
+      <h2>Broadcast</h2>
+      <input type="text" id="broadcastMsg" placeholder="Message" />
+      <button onclick="sendBroadcast()">Broadcast</button>
+    </div>
+
+    <div>
+      <h2>Channel Message</h2>
+      <input type="text" id="channelName" placeholder="Channel" />
+      <input type="text" id="channelMsg" placeholder="Message" />
+      <button onclick="sendToChannel()">Send</button>
+    </div>
+
+    <div>
+      <h3>Status</h3>
+      <div id="status"></div>
+    </div>
+
+    <div>
+      <h2>Messages</h2>
+      <div id="messages"></div>
+    </div>
+
+    <script>
+      let lastPeerCount = 0;
+      let lastChannelCount = 0;
+      let lastMessageCount = 0;
+      let lastMessageTimestamp = 0;
+      let isPolling = false;
+      let handshakes = {};
+      let currentPeerId = null; // Track current peer ID
+
+      async function request(method, path, data = null) {
+        try {
+          const options = {
+            method: method,
+            headers: { "Content-Type": "application/json" },
+          };
+          if (data && method === "POST") {
+            options.body = JSON.stringify(data);
+          }
+          const res = await fetch(path, options);
+          return await res.json();
+        } catch (e) {
+          console.error(e);
+          return { status: "error", message: e.message };
+        }
+      }
+
+      function showStatus(msg) {
+        document.getElementById("status").textContent = msg;
+        setTimeout(() => {
+          document.getElementById("status").textContent = "";
+        }, 3000);
+      }
+
+      // Long-polling for real-time message updates
+      async function startMessagePolling() {
+        if (isPolling) return;
+        isPolling = true;
+
+        while (isPolling) {
+          try {
+            const data = await request("GET", "/api/messages/poll");
+
+            if (data.status === "success" && data.has_update) {
+              // New messages arrived - update UI immediately
+              console.log("New message notification received!");
+              await loadMessages();
+
+              // Play notification sound (optional)
+              // new Audio('/notification.mp3').play();
+            }
+          } catch (e) {
+            console.error("Polling error:", e);
+            // Wait before retrying
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+          }
+        }
+      }
+
+      async function loadPeers() {
+        const data = await request("GET", "/api/peers");
+        const handshakeData = await request("GET", "/api/handshakes");
+
+        if (handshakeData.status === "success") {
+          handshakes = handshakeData.handshakes || {};
+        }
+
+        if (data.status === "success" && data.peers) {
+          if (data.peers.length !== lastPeerCount) {
+            lastPeerCount = data.peers.length;
+            let html = "<ul>";
+            data.peers.forEach((p) => {
+              const isCurrentPeer = p.id === currentPeerId;
+              const isHandshaked = handshakes[p.id]?.status === "accepted";
+              const statusClass = isHandshaked
+                ? "handshake-accepted"
+                : "handshake-none";
+              const statusText = isHandshaked ? "✓ Connected" : "Not Connected";
+
+              html +=
+                "<li" + (isCurrentPeer ? ' class="current-peer"' : "") + ">";
+              html += p.username + " (" + p.id + ") - " + p.ip + ":" + p.port;
+
+              // Only show status and connect button if not current peer
+              if (!isCurrentPeer) {
+                html +=
+                  '<span class="handshake-status ' +
+                  statusClass +
+                  '">' +
+                  statusText +
+                  "</span>";
+
+                if (!isHandshaked) {
+                  html +=
+                    " <button onclick=\"doHandshake('" +
+                    p.id +
+                    "')\">Connect</button>";
+                }
+              } else {
+                html += ' <span style="color: #1976d2;">(You)</span>';
+              }
+
+              html += "</li>";
+            });
+            html += "</ul>";
+            document.getElementById("peerList").innerHTML = html;
+          }
+        }
+      }
+
+      async function doHandshake(peerId) {
+        showStatus("Connecting to " + peerId + "...");
+        const data = await request("POST", "/api/handshake", {
+          peer_id: peerId,
+        });
+
+        if (data.status === "success") {
+          showStatus(
+            "Connected with " +
+              peerId +
+              " (" +
+              (data.peer_username || "Unknown") +
+              ")"
+          );
+          loadPeers();
+        } else {
+          showStatus("Connection failed: " + (data.message || "Unknown error"));
+        }
+      }
+
+      async function loadChannels() {
+        const data = await request("GET", "/api/channels");
+        if (data.status === "success" && data.channels) {
+          if (data.channels.length !== lastChannelCount) {
+            lastChannelCount = data.channels.length;
+            let html = "<ul>";
+            data.channels.forEach((c) => {
+              html +=
+                "<li>" +
+                c.name +
+                " (Owner: " +
+                c.owner +
+                ", Members: " +
+                c.members +
+                ") ";
+              html +=
+                "<button onclick=\"joinChannel('" +
+                c.name +
+                "')\">Join</button></li>";
+            });
+            html += "</ul>";
+            document.getElementById("channelList").innerHTML = html;
+          }
+        }
+      }
+
+      async function loadMessages() {
+        const data = await request("GET", "/api/messages");
+        if (data.status === "success" && data.messages) {
+          // Check timestamp for real updates
+          if (
+            data.timestamp &&
+            data.timestamp > lastMessageTimestamp &&
+            data.messages.length !== lastMessageCount
+          ) {
+            lastMessageCount = data.messages.length;
+            lastMessageTimestamp = data.timestamp;
+
+            let html = "";
+            data.messages.forEach((m) => {
+              let label = "";
+              if (m.type === "broadcast") label = "[BROADCAST]";
+              else if (m.type === "channel")
+                label = "[CHANNEL: " + m.channel + "]";
+              else if (m.to) label = "[TO: " + m.to + "]";
+              else label = "[DIRECT]";
+
+              html +=
+                "<p><b>" + m.from + "</b> " + label + ": " + m.content + "</p>";
+            });
+
+            const messagesDiv = document.getElementById("messages");
+            messagesDiv.innerHTML = html;
+
+            // Auto-scroll to bottom
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+            // Show notification
+            if (
+              data.messages.length > 0 &&
+              data.messages[data.messages.length - 1].from !== "You"
+            ) {
+              showStatus("New message received!");
+            }
+          }
+        }
+      }
+
+      async function createChannel() {
+        const name = document.getElementById("newChannel").value;
+        if (!name) return;
+        const data = await request("POST", "/api/channel/create", {
+          channel: name,
+        });
+        if (data.status === "success") {
+          showStatus("Channel created");
+          document.getElementById("newChannel").value = "";
+          loadChannels();
+        } else {
+          showStatus("Error: " + (data.message || "Unknown error"));
+        }
+      }
+
+      async function joinChannel(name) {
+        const data = await request("POST", "/api/channel/join", {
+          channel: name,
+        });
+        if (data.status === "success") {
+          showStatus("Joined " + name);
+          loadChannels();
+        } else {
+          showStatus("Error: " + (data.message || "Unknown error"));
+        }
+      }
+
+      async function sendDirect() {
+        const to = document.getElementById("directTo").value;
+        const msg = document.getElementById("directMsg").value;
+        if (!to || !msg) return;
+        const data = await request("POST", "/api/send", {
+          to: to,
+          message: msg,
+        });
+        if (data.status === "success") {
+          showStatus("Sent to " + to);
+          document.getElementById("directMsg").value = "";
+          loadMessages();
+        } else {
+          showStatus("Error: " + (data.message || "Failed to send"));
+        }
+      }
+
+      async function sendBroadcast() {
+        const msg = document.getElementById("broadcastMsg").value;
+        if (!msg) return;
+        const data = await request("POST", "/api/broadcast", { message: msg });
+        if (data.status === "success") {
+          showStatus(data.message);
+          document.getElementById("broadcastMsg").value = "";
+          loadMessages();
+        } else {
+          showStatus("Error: " + (data.message || "Failed to broadcast"));
+        }
+      }
+
+      async function sendToChannel() {
+        const channel = document.getElementById("channelName").value;
+        const msg = document.getElementById("channelMsg").value;
+        if (!channel || !msg) return;
+        const data = await request("POST", "/api/channel/send", {
+          channel: channel,
+          message: msg,
+        });
+        if (data.status === "success") {
+          showStatus(data.message);
+          document.getElementById("channelMsg").value = "";
+          loadMessages();
+        } else {
+          showStatus("Error: " + (data.message || "Failed to send"));
+        }
+      }
+
+      // Periodic refresh for peers and channels
+      setInterval(() => {
+        loadPeers();
+        loadChannels();
+      }, 5000);
+
+      // Initial load
+      window.onload = async () => {
+        // Get current peer ID from URL or detect from first load
+        const urlParams = new URLSearchParams(window.location.search);
+        const port = window.location.port;
+        currentPeerId = "peer_" + port;
+
+        loadPeers();
+        loadChannels();
+        loadMessages();
+
+        // Start long-polling for real-time message updates
+        startMessagePolling();
+      };
+
+      // Cleanup on page unload
+      window.onbeforeunload = () => {
+        isPolling = false;
+      };
+    </script>
+  </body>
+</html>

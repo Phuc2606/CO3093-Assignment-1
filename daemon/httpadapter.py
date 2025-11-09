@@ -23,6 +23,11 @@ Request and Response objects to handle client-server communication.
 from .request import Request
 from .response import Response
 from .response_template import RESPONSE_TEMPLATES
+
+import json
+
+SESSIONS = {}
+SESSION_COUNTER = 0
 class HttpAdapter:
     """
     A mutable :class:`HTTP adapter <HTTP adapter>` for managing client connections
@@ -100,55 +105,164 @@ class HttpAdapter:
         req = self.request
         # Response handler
         resp = self.response
-        try:
         # Handle the request
-            msg = conn.recv(1024).decode()
-            req.prepare(msg, routes)
-            # Task 1A: login
-            if req.method == "POST" and req.path == "/login":
-                return self.send(resp, self.handle_login(req, resp))
+        msg = conn.recv(1024).decode()
+        req.prepare(msg, routes)
+        if req.hook:
+            print("[HttpAdapter] hook in route-path METHOD {} PATH {}".format(req.hook._route_path,req.hook._route_methods))           
+            #
+            # TODO: handle for App hook here
+            #
 
-            # Task 1B: cookie guard
-            early = self.cookie_auth_guard(req)
-            if early is not None:
-                return self.send(resp, early)
-            raw = self.response.build_response(req)
-            self.conn.sendall(raw)
-        finally:
+            try:
+                # Call hook handler and get result
+                hook_result = req.hook(headers=req.headers, body=req.body)
+                
+                if hook_result is not None:
+                    print("[HttpAdapter] Hook returned data: {}...".format(
+                        str(hook_result)[:80]))
+                    
+                    # Determine Content-Type based on return type
+                    if isinstance(hook_result, str):
+                        # Check if it's JSON string
+                        if hook_result.strip().startswith('{') or hook_result.strip().startswith('['):
+                            content_type = 'application/json'
+                        elif hook_result.strip().startswith('<'):
+                            content_type = 'text/html; charset=utf-8'
+                        else:
+                            content_type = 'text/plain; charset=utf-8'
+                        
+                        content_bytes = hook_result.encode('utf-8')
+                    else:
+                        content_type = 'application/json'
+                        content_bytes = json.dumps(hook_result).encode('utf-8')
+                    
+                    # Build response header
+                    response_header = "HTTP/1.1 200 OK\r\n"
+                    response_header += "Content-Type: {}\r\n".format(content_type)
+                    response_header += "Content-Length: {}\r\n".format(len(content_bytes))
+                    response_header += "Connection: close\r\n"
+                    response_header += "\r\n"
+                    
+                    # Combine header + body
+                    response = response_header.encode('utf-8') + content_bytes
+                    
+                    # Send response
+                    conn.sendall(response)
+                    conn.close()
+                    return
+                    
+                else:
+                    print("[HttpAdapter] Hook executed but returned None")
+                    
+            except Exception as e:
+                print("[HttpAdapter] Hook execution error: {}".format(e))
+                # Return JSON error response
+                error_body = json.dumps({
+                    'status': 'error',
+                    'message': 'Internal Server Error: {}'.format(str(e))
+                })
+                
+                response_header = "HTTP/1.1 500 Internal Server Error\r\n"
+                response_header += "Content-Type: application/json\r\n"
+                response_header += "Content-Length: {}\r\n".format(len(error_body))
+                response_header += "Connection: close\r\n"
+                response_header += "\r\n"
+                
+                response = response_header.encode('utf-8') + error_body.encode('utf-8')
+                conn.sendall(response)
+                conn.close()
+                return
+        global SESSION_COUNTER
+            
+        # TASK 1: Handle login
+        if req.method == "POST" and req.path == "/login":
+            try:
+                data = {}
+
+                # --- Parse body ---
+                try:
+                    # Nếu body là JSON
+                    data = json.loads(req.body)
+                except json.JSONDecodeError:
+                    # Nếu không phải JSON → parse form-urlencoded
+                    for pair in req.body.split("&"):
+                        if "=" in pair:
+                            key, val = pair.split("=", 1)
+                            data[key] = val
+
+                username = data.get("username")
+                password = data.get("password")
+
+                #Kiểm tra đăng nhập
+                if username == "admin" and password == "password":
+                    req.auth = True
+                    SESSION_COUNTER += 1
+                    session_id = str(SESSION_COUNTER)
+                    SESSIONS[session_id] = True
+                    try:
+                        with open("www/index.html", "r", encoding="utf-8") as f:
+                            body = f.read()
+                    except FileNotFoundError:
+                        body = "<h1>Index page not found</h1>"
+
+                    #Tạo header phản hồi
+                    response_header = (
+                        "HTTP/1.1 200 OK\r\n"
+                        "Content-Type: text/html; charset=utf-8\r\n"
+                        f"Set-Cookie: session_id={session_id}; Path=/; HttpOnly\r\n"
+                        f"Content-Length: {len(body.encode('utf-8'))}\r\n"
+                        "Connection: close\r\n\r\n"
+                    )
+
+                    conn.sendall(response_header.encode("utf-8") + body.encode("utf-8"))
+                    conn.close()
+                    return
+
+                else:
+                    #Sai username hoặc password
+                    req.auth = False
+                    resp_template = RESPONSE_TEMPLATES["login_failed"]
+
+            except Exception as e:
+                print(f"[HttpAdapter] Login error: {e}")
+                req.auth = False
+                resp_template = RESPONSE_TEMPLATES["login_failed"]
+
+            #Trả phản hồi lỗi đăng nhập
+            response_header = (
+                f"HTTP/1.1 {resp_template['status']}\r\n"
+                f"Content-Type: {resp_template['content_type']}\r\n"
+                f"Content-Length: {len(resp_template['body'])}\r\n"
+                "Connection: close\r\n\r\n"
+            )
+            conn.sendall(response_header.encode("utf-8") + resp_template["body"])
             conn.close()
-    def handle_login(self, req, resp):
-        raw_body = req.body.decode("utf-8", "ignore") if isinstance(req.body, (bytes, bytearray)) else (req.body or "")
-        creds = {}
-        for pair in raw_body.split("&"):
-            if "=" in pair:
-                k, v = pair.split("=", 1)
-                creds[k] = v
+            return
 
-        if creds.get("username") == "admin" and creds.get("password") == "password":
-            req.path = "/index.html"
-            raw = resp.build_response(req)
-            body = raw.split(b"\r\n\r\n", 1)[1] if b"\r\n\r\n" in raw else raw
-            headers = {
-                "Content-Type": "text/html; charset=utf-8",
-                "Set-Cookie": "auth=true; Path=/",
-            }
-            return ("200 OK", headers, body)
 
-        e = RESPONSE_TEMPLATES["login_failed"]
-        return (e["status"], {"Content-Type": e["content_type"], **e["headers"]}, e["body"])
-    #TASK 1: COOKIES
-    def cookie_auth_guard(self, req):
-        if req.path in ("/", "/index.html"):
-            if req.cookies.get("auth") != "true":
-                e = RESPONSE_TEMPLATES["unauthorized"]
-                return (e["status"], {"Content-Type": e["content_type"], **e["headers"]}, e["body"])
-        if req.path == "/":
-            req.path = "/index.html"
-        return None
-    
-    def send(self, resp, triple):
-        status, headers, body = triple
-        self.conn.sendall(resp.compose(status=status, headers=headers, body=body))
+        #Xử lý index/chat khi chưa login
+        cookies = req.headers.get("Cookie", "")
+        session_id = None
+        for c in cookies.split(";"):
+            if "session_id=" in c:
+                session_id = c.strip().split("=")[1]
+                break
+
+        auth_status = SESSIONS.get(session_id, False)
+        if req.path in ["/","/index.html", "/chat.html"] and not auth_status:
+            resp_template = RESPONSE_TEMPLATES["unauthorized"]
+            response_header = f"HTTP/1.1 {resp_template['status']}\r\nContent-Type: {resp_template['content_type']}\r\nContent-Length: {len(resp_template['body'])}\r\nConnection: close\r\n\r\n"
+            conn.sendall(response_header.encode('utf-8') + resp_template['body'])
+            conn.close()
+            return
+
+
+        # Build response
+        response = resp.build_response(req)
+        # print(response)
+        conn.sendall(response)
+        conn.close()
 
 
     @property
@@ -184,7 +298,10 @@ class HttpAdapter:
         response.raw = resp
         response.reason = getattr(resp, "reason", "OK")
 
-        response.url = req.url.decode("utf-8") if isinstance(req.url, bytes) else req.url
+        if isinstance(req.url, bytes):
+            response.url = req.url.decode("utf-8")
+        else:
+            response.url = req.url
 
         # Add new cookies from the server.
         response.cookies = self.extract_cookies(req)

@@ -1,0 +1,28 @@
+Step 1 - Start Server
+python chat_server.py --server-ip 127.0.0.1 --server-port 8000
+
+Step 2 - Start Peers
+python chat_peer.py --username <name> --peer-port 500<x> --server-ip 127.0.0.1
+
+#Example:  
+python chat_peer.py --username Phuc1 --peer-port 5001 --server-ip 127.0.0.1
+python chat_peer.py --username Phuc2 --peer-port 5002 --server-ip 127.0.0.1
+....
+
+Step 3:
+1. Go to: http://127.0.0.1:5001
+          http://127.0.0.1:5002
+3. Visit login page: http://127.0.0.1:5001/login.html
+                     http://127.0.0.1:5002/login.html
+4. Login using:
+- Username: admin
+- Password: password
+
+5. Enter Chat Room
+- Online Peers: active_peers List
+-Channels: Create, Join
+-Direct message: Send message to active_peer by peer_id
+-Broadcast: Broadcast message to all active_peers
+-Channel message: Send message to your channel 
+-Status: Status
+-Message: Received Message
