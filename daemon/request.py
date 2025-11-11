@@ -69,9 +69,9 @@ class Request():
     def extract_request_line(self, request):
         try:
             lines = request.splitlines()
-            first_line = lines[0]
+            first_line = lines[0].strip()
             method, path, version = first_line.split()
-            return method, path, version
+            return method.strip(), path.strip(), version.strip()
         except Exception:
             print("[Request] Invalid request line:", request)
             return None, None, None
@@ -88,7 +88,6 @@ class Request():
 
     def prepare(self, request, routes=None):
         """Prepares the entire request with the given parameters."""
-
         # Prepare the request line from the request header
         self.method, self.path, self.version = self.extract_request_line(request)
         print("[Request] {} path {} version {}".format(self.method, self.path, self.version))
